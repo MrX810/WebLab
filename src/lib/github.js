@@ -1,32 +1,21 @@
-// WebLab — GitHub client for the "Go" flow.
-// Runs entirely in the browser. The user's GitHub token lives ONLY in localStorage.
+// WebLab v2 — GitHub "Inbox" client.
+// WebLab talks to Hermes through a small GitHub repo of issues.
+// Everything runs in the browser; the user's token stays in localStorage.
 
-const API = 'https://api.github.com';
+const API = 'https://api.github.com'
+const INBOX_REPO = 'WebLab-Inbox'
 
-function token() {
-  return localStorage.getItem('weblab.gh.token');
-}
-
-export function hasToken() {
-  return !!token();
-}
-
-export function setToken(t) {
-  localStorage.setItem('weblab.gh.token', t.trim());
-}
-
-export function clearToken() {
-  localStorage.removeItem('weblab.gh.token');
-}
-
-export function tokenInfo() {
-  const t = token();
-  if (!t) return { ok: false, error: 'No token stored.' };
-  return { ok: true, prefix: t.slice(0, 4) + '…' + t.slice(-4) };
+function token() { return localStorage.getItem('weblab.gh.token') }
+export const hasToken = () => !!token()
+export function setToken(t) { localStorage.setItem('weblab.gh.token', t.trim()) }
+export function clearToken() { localStorage.removeItem('weblab.gh.token') }
+export function tokenPreview() {
+  const t = token(); if (!t) return ''
+  return t.slice(0, 4) + '…' + t.slice(-4)
 }
 
 async function gh(method, path, body) {
-  const t = token();
+  const t = token()
   const res = await fetch(API + path, {
     method,
     headers: {
@@ -35,83 +24,107 @@ async function gh(method, path, body) {
       'User-Agent': 'WebLab',
     },
     body: body ? JSON.stringify(body) : undefined,
-  });
+  })
   if (!res.ok) {
-    let msg = `GitHub ${res.status}`;
-    try { const j = await res.json(); if (j.message) msg = j.message; } catch {}
-    throw new Error(msg);
+    let msg = `GitHub ${res.status}`
+    try { const j = await res.json(); if (j.message) msg = j.message } catch {}
+    throw new Error(msg)
   }
-  return res.json();
+  return res.json()
 }
 
-// Verify the token by loading the authenticated user.
+// Verify token and return login.
 export async function verifyToken() {
-  const u = await gh('GET', '/user');
-  return u.login;
+  const u = await gh('GET', '/user')
+  return u.login
 }
 
-// Find the "WebLab Inbox" repo we use as a bridge to the agent (Hermes).
-export async function getInboxRepo() {
-  const me = await gh('GET', '/user');
-  const name = 'WebLab-Inbox';
-  try {
-    await gh('GET', `/repos/${me.login}/${name}`);
-    return { owner: me.login, repo: name };
-  } catch {
-    // repo doesn't exist; create it (public so Pages works, empty otherwise)
+// Ensure the Inbox repo exists (create if missing).
+export async function ensureInbox() {
+  const me = await verifyToken()
+  const full = `${me.login}/${INBOX_REPO}`
+  try { await gh('GET', `/repos/${full}`); return full }
+  catch {
     await gh('POST', '/user/repos', {
-      name,
-      description: 'WebLab build requests (agent bridge). Created automatically.',
-      private: false,
-      auto_init: true,
-      has_issues: true,
-      has_wiki: false,
-    });
-    return { owner: me.login, repo: name };
+      name: INBOX_REPO,
+      description: 'WebLab ↔ Hermes brainstorm bridge (issues are conversations).',
+      private: false, auto_init: true, has_issues: true, has_wiki: false,
+    })
+    return full
   }
 }
 
-// Submit a build request: create an issue in the Inbox repo with the full plan.
-export async function submitBuildRequest(appName, specJson, specMarkdown) {
-  const inbox = await getInboxRepo();
-  const title = `[BUILD] ${appName}`;
+// ---------------------------------------------------------------------------
+// Project = an Issue. Chat messages = issue comments.
+// Message framing: each comment body starts with a "frame" line.
+//   /weblab/msg <role>   — a chat message (user or hermes)
+//   /weblab/build <json> — final build request (contains prompt)
+//   /weblab/status <text> — builder status update (Hermes -> WebLab)
+// ---------------------------------------------------------------------------
+
+export async function openProjectIssue(project, prompt) {
+  const full = await ensureInbox()
+  const title = `[WEBLAB] ${project.name || 'Untitled Project'}`
   const body = [
-    '**WebLab build request** — please build exactly this plan. **No code until Julian approves this spec** (Go = the spec is final).',
+    '/weblab/project',
+    'name: ' + (project.name || 'Untitled'),
+    'id: ' + project.id,
+    'idea: ' + (project.idea || '').slice(0, 500),
     '',
-    '```json',
-    specJson.slice(0, 12000),
+    '--- Live prompt (grows as we talk) ---',
     '```',
-    '',
-    '---',
-    specMarkdown,
-  ].join('\n');
-
-  const issue = await gh('POST', `/repos/${inbox.owner}/${inbox.repo}/issues`, {
-    title,
-    body,
-    labels: ['weblab-build'],
-  });
-  return { url: issue.html_url, number: issue.number };
+    (prompt || '').slice(0, 3000),
+    '```',
+  ].join('\n')
+  const issue = await gh('POST', `/repos/${full}/issues`, { title, body })
+  return { owner: full.split('/')[0], repo: INBOX_REPO, number: issue.number, url: issue.html_url }
 }
 
-// Poll a build request: look for the comment in `/weblab/status` on the issue.
-export async function pollBuildStatus(owner, repo, issueNumber) {
-  const comments = await gh('GET', `/repos/${owner}/${repo}/issues/${issueNumber}/comments`);
-  const marker = comments.filter(c => c.body.startsWith('/weblab/status')).pop();
-  if (!marker) return { state: 'queued', message: 'Waiting for the builder…' };
-  const m = marker.body.match(/\/weblab\/status\n([\s\S]*)/);
-  return { state: 'done', message: m ? m[1].trim() : 'Done.' };
+// Fetch comments on an issue, undecoded into chat-ish messages.
+export async function fetchComments(owner, repo, number) {
+  const list = await gh('GET', `/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`)
+  return list.map(c => ({ id: c.id, user: c.user.login, body: c.body, createdAt: c.created_at }))
 }
 
-// Get live status of an in-flight job by listing issues (for the Inbox repo).
-export async function listBuildRequests() {
-  const inbox = await getInboxRepo();
-  const issues = await gh('GET', `/repos/${inbox.owner}/${inbox.repo}/issues?state=open`);
-  return issues.map(i => ({
-    number: i.number,
-    title: i.title,
-    url: i.html_url,
-    createdAt: i.created_at,
-    comments: i.comments,
-  }));
+// Parse a comment body into a structured message.
+export function parseComment(body) {
+  const first = body.split('\n')[0] || ''
+  if (first.startsWith('/weblab/msg ')) {
+    const role = first.replace('/weblab/msg ', '').trim()
+    const text = body.split('\n').slice(1).join('\n').trim()
+    return { kind: 'msg', role, text }
+  }
+  if (first.startsWith('/weblab/status ')) {
+    const text = body.replace('/weblab/status ', '').trim()
+    return { kind: 'status', text }
+  }
+  if (first.startsWith('/weblab/build ')) {
+    let text = body.replace('/weblab/build ', '').trim()
+    let json = {}
+    try { json = JSON.parse(text) } catch {}
+    return { kind: 'build', text, json }
+  }
+  return { kind: 'raw', text: body }
+}
+
+// Post a user chat message to the issue.
+export async function postMessage(owner, repo, number, text) {
+  const body = '/weblab/msg user\n' + text
+  return gh('POST', `/repos/${owner}/${repo}/issues/${number}/comments`, { body })
+}
+
+// For the very first send: create the issue with the initial user message folded in.
+export async function createAndPost(project, prompt, firstText) {
+  const full = await ensureInbox()
+  const owner = full.split('/')[0]
+  const issue = await openProjectIssue(project, prompt)
+  if (firstText) await postMessage(owner, INBOX_REPO, issue.number, firstText)
+  return issue
+}
+
+// List open inbox issues (for the watcher/browser status).
+export async function listOpenIssues() {
+  const full = await ensureInbox()
+  const issues = await gh('GET', `/repos/${full}/issues?state=open&per_page=30`)
+  return issues.map(i => ({ number: i.number, title: i.title, url: i.html_url, comments: i.comments }))
 }

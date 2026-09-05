@@ -1,230 +1,185 @@
-// WebLab — data model, building-block definitions, and the UX rule engine (pure logic, no React).
+// WebLab v2 — Prompt Studio.
+// Visual brainstorm chat with Hermes. The artifact is the PROMPT, not code.
+// This module: data model, prompt builder, local rule engine (works without Hermes).
 
-// ---------------------------------------------------------------------------
-// Types (plain JS — this project uses JSX, no TS)
-// A Board is an array of screens. A Screen has blocks. Connections link screens.
-// ---------------------------------------------------------------------------
+export const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
 
-/** @typedef {'text'|'heading'|'button'|'image'|'card'|'form'|'video'|'gallery'|'navbar'|'footer'|'hero'|'divider'|'list'|'icon'} BlockType */
+// The categories we probe during a brainstorm. They map to prompt sections.
+export const CATEGORIES = [
+  { id: 'idea',    label: 'Idee & Ziel',    short: 'Was ist es?' },
+  { id: 'screens', label: 'Screens',        short: 'Welche Ansichten?' },
+  { id: 'features',label: 'Features',       short: 'Was passiert bei…?' },
+  { id: 'data',    label: 'Daten',          short: 'Wo liegen die Daten?' },
+  { id: 'design',  label: 'Design-Stil',    short: 'Wie soll es wirken?' },
+  { id: 'quality', label: 'Qualität',       short: 'Was darf nie fehlen?' },
+]
 
-export const BLOCK_TYPES = [
-  { type: 'navbar',   label: 'Navbar',    icon: '≡', desc: 'Top navigation bar',           defaultW: 360, defaultH: 44 },
-  { type: 'hero',     label: 'Hero',      icon: '★', desc: 'Big headline section',         defaultW: 360, defaultH: 150 },
-  { type: 'heading',  label: 'Heading',   icon: 'H', desc: 'Section heading',              defaultW: 320, defaultH: 40 },
-  { type: 'text',     label: 'Text',      icon: '¶', desc: 'Paragraph text',               defaultW: 320, defaultH: 70 },
-  { type: 'button',   label: 'Button',    icon: '▣', desc: 'Clickable button',             defaultW: 140, defaultH: 40 },
-  { type: 'image',    label: 'Image',     icon: '▧', desc: 'Image placeholder',            defaultW: 240, defaultH: 140 },
-  { type: 'card',     label: 'Card',      icon: '▭', desc: 'Card container',               defaultW: 320, defaultH: 130 },
-  { type: 'list',     label: 'List',      icon: '☰', desc: 'Bullet list / steps',          defaultW: 300, defaultH: 120 },
-  { type: 'gallery',  label: 'Gallery',   icon: '❐', desc: 'Image grid',                   defaultW: 340, defaultH: 150 },
-  { type: 'form',     label: 'Form',      icon: '✎', desc: 'Input form (name, email...)',  defaultW: 320, defaultH: 180 },
-  { type: 'video',    label: 'Video',     icon: '▶', desc: 'Video embed placeholder',      defaultW: 320, defaultH: 170 },
-  { type: 'divider',  label: 'Divider',   icon: '―', desc: 'Horizontal separator',         defaultW: 300, defaultH: 20 },
-  { type: 'footer',   label: 'Footer',    icon: '⌄', desc: 'Footer section',               defaultW: 360, defaultH: 90 },
-  { type: 'icon',     label: 'Icon',      icon: '◈', desc: 'Small icon / symbol',          defaultW: 40,  defaultH: 40 },
-];
-
-export const TYPE_MAP = Object.fromEntries(BLOCK_TYPES.map(b => [b.type, b]));
-
-// Default editable properties per block type (the "panels" the user edits)
-export const DEFAULT_PROPS = {
-  navbar:   { title: 'My App', links: 'Home\nAbout\nContact' },
-  hero:     { heading: 'Welcome to My App', subtext: 'A short, catchy description goes here.', cta: 'Get Started' },
-  heading:  { text: 'Section Heading' },
-  text:     { text: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. This is placeholder text.' },
-  button:   { label: 'Click Me', style: 'primary' },
-  image:    { src: '', alt: 'Image description' },
-  card:     { title: 'Card Title', body: 'Card body text goes here. Add more details about this item.', image: false },
-  list:     { items: 'First item\nSecond item\nThird item' },
-  gallery:  { images: 4, caption: false },
-  form:     { fields: 'name\nemail', button: 'Submit' },
-  video:    { url: '', caption: '' },
-  divider:  { style: 'solid' },
-  footer:   { text: '© 2026 My App. All rights reserved.', links: 'Imprint\nPrivacy' },
-  icon:     { symbol: '⚡', label: '' },
-};
-
-export const COLOR_PRESETS = ['#3b82f6', '#22c55e', '#ef4444', '#f59e0b', '#8b5cf6', '#10b981',
-  '#f43f5e', '#0ea5e9', '#64748b', '#f97316', '#84cc16', '#a855f7'];
-
-export const FONT_PRESETS = ['Inter', 'System', 'Georgia', 'Space Grotesk', 'Poppins'];
-
-export function uid() {
-  return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
-}
-
-export function newScreen(name) {
-  return { id: uid(), name: name || 'New Screen', blocks: [], connections: [], bg: '#ffffff', textColor: '#111827' };
-}
-
-export function newBlock(type, x = 0, y = 0) {
-  const t = TYPE_MAP[type];
+// A brainstorm project.
+export function newProject(name) {
   return {
-    id: uid(), type, x, y,
-    w: t ? t.defaultW : 200, h: t ? t.defaultH : 60,
-    props: JSON.parse(JSON.stringify(DEFAULT_PROPS[type] || {})),
-  };
+    id: uid(),
+    name: name || 'Untitled Project',
+    idea: '',
+    answers: {},        // categoryId -> accumulated text (from suggestions + user)
+    customNotes: [],    // free-form user notes added to the prompt
+    chat: [],           // chat messages (see shapes below)
+    status: 'draft',    // draft | building | live
+    liveUrl: '',
+    updatedAt: Date.now(),
+  }
+}
+
+// Chat message shapes:
+// { id, role: 'user'|'hermes'|'system', kind: 'text'|'suggestions'|'status'|'build', text?, suggestions?, data? }
+
+// ---------------------------------------------------------------------------
+// Prompt builder
+// ---------------------------------------------------------------------------
+
+export function buildPrompt(project) {
+  const L = []
+  const appName = project.name || 'Untitled App'
+  L.push(`# ${appName}`)
+  L.push('')
+  L.push('Build this web app exactly as specified below. Do not add features that are not described. Do not change the described behavior. Use plain HTML/CSS/JS in one index.html unless told otherwise.')
+  L.push('')
+  L.push('## Core idea')
+  L.push(project.idea.trim() || '*Not described yet.*')
+  L.push('')
+
+  for (const cat of CATEGORIES) {
+    const val = (project.answers[cat.id] || '').trim()
+    if (!val) continue
+    L.push(`## ${cat.label}`)
+    L.push(val)
+    L.push('')
+  }
+
+  if (project.customNotes.length) {
+    L.push('## Additional notes')
+    project.customNotes.forEach(n => L.push('- ' + n))
+    L.push('')
+  }
+
+  L.push('## Quality bar')
+  const q = [
+    'Responsive: must work on iPhone, iPad, and desktop.',
+    'Clean, modern dark-friendly design with decent spacing.',
+  ]
+  if (!(project.answers.quality || '').toLowerCase().includes('dark'))
+    q.push('Optional: dark mode toggle if the design suits it.')
+  q.forEach(x => L.push('- ' + x))
+  L.push('')
+  L.push('Build it, host it on GitHub Pages, and return the live URL.')
+  return L.join('\n')
+}
+
+// Compact one-line version of the prompt for quick review.
+export function promptSummary(project) {
+  const parts = [project.idea.trim()]
+  for (const cat of CATEGORIES) if ((project.answers[cat.id] || '').trim()) parts.push((project.answers[cat.id] || '').trim())
+  return parts.join(' · ').slice(0, 160)
 }
 
 // ---------------------------------------------------------------------------
-// UX rule engine — scans a board and produces suggestions (the "Architect").
-// Each suggestion can be applied to the board (applySuggestion) and undone.
+// Local rule engine — generates suggestions WITHOUT calling Hermes.
+// Returns an array of { id, categoryId, title, desc, apply(text) }.
+// Applied suggestions append text to the category.
 // ---------------------------------------------------------------------------
 
-const has = (screen, type) => screen.blocks.some(b => b.type === type);
+export function generateSuggestions(project) {
+  const out = []
+  const a = project.answers
 
-export function generateSuggestions(board) {
-  const out = [];
-  for (const screen of board) {
-    const blocks = screen.blocks;
-
-    // Missing closing section
-    if (has(screen, 'navbar') && !has(screen, 'footer'))
-      out.push(sugg('footer', screen.id, 'Add a footer', 'This screen has a navbar but no footer. Visually unbalanced.', { type: 'footer' }));
-
-    // Hero without CTA button
-    if (has(screen, 'hero') && !has(screen, 'button') && !has(screen, 'form'))
-      out.push(sugg('cta', screen.id, 'Add a call-to-action button', 'A hero usually needs a primary button below it. One click to add it.', { type: 'button', props: { label: 'Get Started', style: 'primary' } }));
-
-    // Contact / imprint screen flow
-    if (board.length >= 2 && !board.some(s => /contact|impress|about/i.test(s.name)))
-      out.push(sugg('about', screen.id, 'Add an "About" screen', 'Multi-screen apps benefit from an About/Contact screen for trust.', null, null, 'A new screen "About" connected from the first screen.'));
-
-    // Form without fields
-    const form = blocks.find(b => b.type === 'form');
-    if (form && (!form.props.fields || form.props.fields.trim() === ''))
-      out.push(sugg('formfields', screen.id, 'Add form fields', 'Your form has no input fields yet.', { id: form.id, type: 'form', props: { fields: 'name\nemail' } }));
-  }
-
-  // Empty board
-  if (board.length === 0)
-    out.push(sugg('start', null, 'Start with a screen', 'Boards begin with at least one screen. Click to add a "Home" screen.', null, null, 'A screen "Home" with a hero, button and footer.'));
-
-  return out;
-}
-
-function sugg(id, screenId, title, desc, apply, targetScreenId, note) {
-  return { id: uid(), ruleId: id, screenId, title, desc, apply, targetScreenId, note };
-}
-
-export function applySuggestion(board, suggestion) {
-  const next = JSON.parse(JSON.stringify(board));
-
-  if (suggestion.ruleId === 'start') {
-    const s = newScreen('Home');
-    s.blocks.push(newBlock('hero', 10, 10));
-    s.blocks.push(newBlock('button', 130, 170));
-    next.push(s);
-    return { board: next, screenId: s.id };
-  }
-
-  const screen = next.find(s => s.id === suggestion.screenId);
-  if (!screen) return { board: next, screenId: null };
-
-  if (suggestion.ruleId === 'about') {
-    const s = newScreen('About');
-    s.blocks.push(newBlock('heading', 10, 10));
-    s.blocks.push(newBlock('text', 10, 60));
-    s.blocks.push(newBlock('button', 10, 160));
-    const from = screen.id;
-    screen.connections.push({ to: s.id });
-    next.push(s);
-    return { board: next, screenId: s.id };
-  }
-
-  let target = screen;
-  if (suggestion.targetScreenId) target = next.find(s => s.id === suggestion.targetScreenId) || screen;
-
-  if (suggestion.apply?.props?.id) {
-    const blk = target.blocks.find(b => b.id === suggestion.apply.props.id);
-    if (blk) Object.assign(blk.props, suggestion.apply.props);
+  // --- idea ---
+  if (!project.idea.trim()) {
+    out.push(sugg('idea', 'idea', 'Was ist die Kern-Idee?',
+      'Beschreibe kurz, was die App tun soll — am besten als ein Satz: "Eine Quiz-App über Hunde mit 20 Fragen".',
+      null, 'idea'))
   } else {
-    const blk = newBlock(suggestion.apply.type, 10 + target.blocks.length * 12, 10 + target.blocks.length * 12);
-    if (suggestion.apply.props) Object.assign(blk.props, suggestion.apply.props);
-    target.blocks.push(blk);
+    const words = project.idea.trim().split(/\s+/).length
+    if (words < 8) out.push(sugg('idea-more', 'idea', 'Etwas ausführlicher?',
+      'Deine Idee ist sehr kurz. Wer ist die App für? Welches Problem löst sie?', null, 'idea'))
   }
 
-  return { board: next, screenId: target.id };
-}
+  // --- screens ---
+  if (!a.screens) out.push(sugg('screens', 'screens', 'Welche Ansichten gibt es?',
+    'Typisch: Home, Detail, Ergebnis. Nenne alle Ansichten, die die App braucht.',
+    'Home, Detail/Ergebnis', 'screens'))
+  else if (a.screens.trim().split(/[\n,]/).filter(s => s.trim()).length < 2)
+    out.push(sugg('screens-2', 'screens', 'Eine Ansicht mehr?',
+      'Die meisten Apps brauchen mindestens zwei Ansichten. Fehlt z.B. eine Ergebnis- oder Detail-Ansicht?',
+      '\n- Ergebnis-Ansicht', 'screens'))
 
-// ---------------------------------------------------------------------------
-// Export: the "Go" plan — JSON spec + human-readable markdown brief.
-// ---------------------------------------------------------------------------
-
-export function exportPlan(board, appName) {
-  const cleaned = board.map(s => ({
-    id: s.id,
-    name: s.name,
-    bg: s.bg,
-    textColor: s.textColor,
-    connections: s.connections,
-    blocks: s.blocks.map(b => ({ type: b.type, x: b.x, y: b.y, w: b.w, h: b.h, props: b.props })),
-  }));
-
-  const md = buildMarkdown(board, appName);
-  return { json: JSON.stringify({ app: appName || 'Untitled App', screens: cleaned }, null, 2), markdown: md };
-}
-
-function buildMarkdown(board, appName) {
-  const lines = [];
-  lines.push(`# ${appName || 'Untitled App'} — Build Specification`);
-  lines.push('');
-  lines.push('**Generated by WebLab.** This is the complete plan for the app. Build it exactly as described.');
-  lines.push('');
-  lines.push(`## Overview\n- ${board.length} screen(s): ${board.map(s => s.name).join(', ')}`);
-  lines.push('');
-  board.forEach((s, i) => {
-    lines.push(`## Screen ${i + 1}: ${s.name}`);
-    lines.push(`- Background: ${s.bg} · Text color: ${s.textColor}`);
-    if (s.connections.length) lines.push(`- Connects to: ${s.connections.map(c => board.find(x => x.id === c.to)?.name || '?').join(', ')}`);
-    if (!s.blocks.length) { lines.push('- (empty — no blocks yet)'); return; }
-    lines.push('### Blocks, top to bottom:');
-    s.blocks.slice().sort((a, b) => a.y - b.y).forEach(b => {
-      const p = b.props || {};
-      const desc = propsToText(b.type, p);
-      lines.push(`- **${TYPE_MAP[b.type]?.label || b.type}**${desc ? ': ' + desc : ''}`);
-    });
-    lines.push('');
-  });
-  if (!board.length) lines.push('_No screens yet._');
-  lines.push('---');
-  lines.push('Build this plan 1:1. Only basic static HTML/CSS/JS is expected unless a feature explicitly requires a backend.');
-  return lines.join('\n');
-}
-
-function propsToText(type, p) {
-  const t = TYPE_MAP[type]?.label || type;
-  switch (type) {
-    case 'text': case 'heading': return p.text || '';
-    case 'button': return p.label || '';
-    case 'navbar': return p.title + (p.links ? ' [' + p.links.split('\n').join(' · ') + ']' : '');
-    case 'hero': return (p.heading || '') + (p.subtext ? ' — ' + p.subtext : '') + (p.cta ? ' [CTA: ' + p.cta + ']' : '');
-    case 'card': return p.title || '';
-    case 'list': return p.items ? p.items.split('\n').slice(0, 3).join(', ') + (p.items.split('\n').length > 3 ? '…' : '') : '';
-    case 'form': return 'fields: ' + (p.fields || '').split('\n').join(', ') + (p.button ? ' → button: ' + p.button : '');
-    case 'gallery': return p.images + ' images' + (p.caption ? ', captions' : '');
-    case 'footer': return p.text || '';
-    case 'image': return p.alt || '(image)';
-    case 'video': return p.url || '(video)';
-    default: return '';
+  // --- features ---
+  if (!a.features) out.push(sugg('features', 'features', 'Welche Interaktionen?',
+    'Was passiert bei einem Klick? Was bei leerem Formular? Zähler, Filter, Timer?',
+    'Interaktionen: Button-Klicks, Formular-Absenden, Zähler', 'features'))
+  else {
+    const f = a.features.toLowerCase()
+    if (!/(timer|zeit|countdown)/.test(f)) out.push(sugg('timer', 'features', 'Timer einbauen?',
+      'Für Quizze/Spiele erhöht ein Timer Spannung. Soll es einen geben?', '\n- Timer pro Frage (Countdown)', 'features'))
+    if (!/(punkt|score|rang|ergebnis|auswertung)/.test(f)) out.push(sugg('score', 'features', 'Punkte & Auswertung?',
+      'Wie wird das Ergebnis festgehalten? Punkte, Ränge, Prozent?', '\n- Punkte zählen und Ergebnis auswerten', 'features'))
+    if (!/(dark|dunkel|theme|farbe)/.test(f)) out.push(sugg('dark', 'features', 'Dark Mode?',
+      'Viele Nutzer lieben Dark Mode. Soll die App ihn unterstützen?', '\n- Dark Mode (Umschalter)', 'features'))
   }
+
+  // --- data ---
+  if (!a.data) out.push(sugg('data', 'data', 'Wo liegen die Daten?',
+    'Gibt es Daten (Quiz-Fragen, Einträge)? Wenn ja: im Browser (localStorage), nur im Code, oder später ein Backend?',
+    'Daten liegen zunächst lokal im Browser (localStorage) bzw. direkt im Code.', 'data'))
+
+  // --- design ---
+  if (!a.design) out.push(sugg('design', 'design', 'Wie soll es aussehen?',
+    'Stimmung, Farben, Vibe — z.B. "süß und verspielt, pastellfarben" oder "clean, minimalistisch, dunkel".',
+    'Design: clean, minimalistisch, dunkel, modern', 'design'))
+  else {
+    const d = a.design.toLowerCase()
+    if (!/(dunkel|dark|schwarz|dunkle)/.test(d)) out.push(sugg('design-dark', 'design', 'Dunkles Design?',
+      'Passt ein dunkles Theme zu deiner App?', '\n- Dunkles Theme', 'design'))
+    if (!/(farbe|farbschema|palette|bunt|pastell|farbig)/.test(d)) out.push(sugg('design-color', 'design', 'Farbschema festlegen?',
+      'Ein konkretes Farbschema macht den Prompt deutlicher.', '\n- Farbschema: (z.B. Blau/Türkis-Akzente auf Dunkel)', 'design'))
+  }
+
+  // --- quality ---
+  if (!a.quality) out.push(sugg('quality', 'quality', 'Qualitäts-Anforderungen?',
+    'Was darf die KI nie vergessen? Responsive, Barrierefreiheit, Ladezeiten?',
+    'Responsive auf iPhone/iPad/Desktop, saubere Semantik (semantische HTML-Tags, aria-labels), schnelle Ladezeit.', 'quality'))
+  else {
+    const q = a.quality.toLowerCase()
+    if (!/(respons|handy|mobil|iphone|ipad)/.test(q)) out.push(sugg('q-resp', 'quality', 'Responsive erwähnen',
+      'Deine Qualitäts-Kriterien erwähnen Mobile nicht explizit.', '\n- Responsive auf iPhone, iPad, Desktop', 'quality'))
+    if (!/(barriere|aria|semantik|zugäng)/.test(q)) out.push(sugg('q-a11y', 'quality', 'Barrierefreiheit?',
+      'Semantische HTML-Tags + aria-Labels machen die App zugänglich und die KI arbeitet sauberer.', '\n- Barrierefreiheit (semantische Tags, aria-labels)', 'quality'))
+  }
+
+  return out
+}
+
+function sugg(id, categoryId, title, desc, addText, target) {
+  return { id, categoryId, title, desc, addText, target }
+}
+
+export function applySuggestion(project, s) {
+  const text = s.addText ? s.addText : ''
+  if (text) {
+    const cur = project.answers[s.categoryId] || ''
+    project.answers[s.categoryId] = (cur + (cur ? '\n' : '') + text).trim()
+  }
+  return project
 }
 
 // ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
 
-const LS_BOARDS = 'weblab.boards.v1';
+const LS = 'weblab.projects.v2'
 
-export function loadBoards() {
-  try { return JSON.parse(localStorage.getItem(LS_BOARDS)) || []; }
-  catch { return []; }
+export function loadProjects() {
+  try { return JSON.parse(localStorage.getItem(LS)) || [] }
+  catch { return [] }
 }
-
-export function saveBoards(boards) {
-  try { localStorage.setItem(LS_BOARDS, JSON.stringify(boards)); } catch {}
-}
-
-export function newBoard(name) {
-  return { id: uid(), name: name || 'Untitled Board', screens: [], updatedAt: Date.now() };
+export function saveProjects(projects) {
+  try { localStorage.setItem(LS, JSON.stringify(projects)) } catch {}
 }
