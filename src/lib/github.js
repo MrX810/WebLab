@@ -39,18 +39,24 @@ export async function verifyToken() {
   return u.login
 }
 
-// Ensure the Inbox repo exists (create if missing).
+// Ensure the Inbox repo exists (use existing, don't try to create if exists).
 export async function ensureInbox() {
   const me = await verifyToken()
   const full = `${me.login}/${INBOX_REPO}`
-  try { await gh('GET', `/repos/${full}`); return full }
-  catch {
-    await gh('POST', '/user/repos', {
-      name: INBOX_REPO,
-      description: 'WebLab ↔ Hermes brainstorm bridge (issues are conversations).',
-      private: false, auto_init: true, has_issues: true, has_wiki: false,
-    })
+  try {
+    await gh('GET', `/repos/${full}`)
     return full
+  } catch (e) {
+    // Only create if it truly doesn't exist (404)
+    if (e.message.includes('404') || e.message.includes('Not Found')) {
+      await gh('POST', '/user/repos', {
+        name: INBOX_REPO,
+        description: 'WebLab <-> Hermes brainstorm bridge (issues are conversations).',
+        private: false, auto_init: true, has_issues: true, has_wiki: false,
+      })
+      return full
+    }
+    throw e
   }
 }
 
