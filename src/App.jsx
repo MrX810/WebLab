@@ -142,8 +142,8 @@ function Studio({ project, onBack, onProjectChange, onDelete }) {
   const [chat, setChat] = useState([])          // rendered messages
   const [input, setInput] = useState('')
   const [suggestions, setSuggestions] = useState([])
-  const [ghToken, setGhToken] = useState(localStorage.getItem('weblab.gh.token') || '')
-  const [ghState, setGhState] = useState('idle') // idle | verifying | ready | error
+  const [ghToken, setGhToken] = useState(() => localStorage.getItem('weblab.gh.token') || '')
+  const [ghState, setGhState] = useState(() => localStorage.getItem('weblab.gh.token') ? 'ready' : 'idle') // idle | verifying | ready | error
   const [ghErr, setGhErr] = useState('')
   const [inbox, setInbox] = useState(null)       // { owner, repo, number, url }
   const [sending, setSending] = useState(false)
@@ -329,11 +329,11 @@ function Studio({ project, onBack, onProjectChange, onDelete }) {
           <div className="progress"><div className="progress-fill" style={{ width: pct + '%' }} /></div>
         </div>
         <div className="tb-right">
-          <button className="ghost" onClick={onDelete} title="Projekt löschen">🗑</button>
-          <button className="primary" onClick={doGo} disabled={!local.idea || goState === 'sent' || goState === 'building'}>
-            🚀 Go
-          </button>
-        </div>
+                    <button className="ghost" onClick={onDelete} title="Projekt löschen">Löschen</button>
+                    <button className="primary" onClick={doGo} disabled={!local.idea || goState === 'sent' || goState === 'building'}>
+                      Go
+                    </button>
+                  </div>
       </div>
 
       {/* Main */}
@@ -394,7 +394,7 @@ function Studio({ project, onBack, onProjectChange, onDelete }) {
               <button className="primary sm" onClick={connectGitHub}>Jetzt verbinden</button>
             </div>
           )}
-          {ghState === 'ready' && <div className="gh-ok">✅ Briefkasten bereit — schreibe unten eine Nachricht.</div>}
+          {ghState === 'ready' && <div className="gh-ok">Briefkasten bereit — schreibe unten eine Nachricht.</div>}
         </div>
 
         {/* Right: prompt + checklist */}
