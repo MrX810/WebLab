@@ -98,7 +98,13 @@ export function parseComment(body) {
   if (first.startsWith('/weblab/msg ')) {
     const role = first.replace('/weblab/msg ', '').trim()
     const text = body.split('\n').slice(1).join('\n').trim()
-    return { kind: 'msg', role, text }
+    // Check for embedded action data (JSON after a marker)
+    let actions = null
+    const actionMatch = text.match(/\/weblab\/action\s+(\{[\s\S]*\})/)
+    if (actionMatch) {
+      try { actions = JSON.parse(actionMatch[1]) } catch {}
+    }
+    return { kind: 'msg', role, text: text.replace(/\/weblab\/action\s+\{[\s\S]*\}/, '').trim(), actions }
   }
   if (first.startsWith('/weblab/status ')) {
     const text = body.replace('/weblab/status ', '').trim()
@@ -111,6 +117,17 @@ export function parseComment(body) {
     return { kind: 'build', text, json }
   }
   return { kind: 'raw', text: body }
+}
+
+// Helper for Hermes to post a message with category-fill actions.
+export function formatHermesMessage(text, actions) {
+  const actionStr = actions ? '\n/weblab/action ' + JSON.stringify(actions) : ''
+  return '/weblab/msg hermes\n' + text + actionStr
+}
+
+// Helper for build request with full prompt.
+export function formatBuildRequest(prompt, name) {
+  return '/weblab/build ' + JSON.stringify({ prompt, name })
 }
 
 // Post a user chat message to the issue.

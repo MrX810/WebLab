@@ -233,7 +233,16 @@ function Studio({ project, onBack, onProjectChange, onDelete }) {
             const key = 'c' + c.id
             if (!seen.has(key)) {
               seen.add(key)
-              setChat(prev => [...prev, { id: key, role: 'hermes', kind: 'text', text: parsed.text }])
+              setChat(prev => [...prev, { id: key, role: 'hermes', kind: 'text', text: parsed.text, actions: parsed.actions }])
+            }
+            // Handle actions: auto-fill categories
+            if (parsed.actions) {
+              const next = { ...local }
+              for (const [catId, val] of Object.entries(parsed.actions)) {
+                if (val && val.trim()) next.answers[catId] = (next.answers[catId] || '') + (next.answers[catId] ? '\n' : '') + val.trim()
+              }
+              setLocal(next)
+              setSuggestions(generateSuggestions(next))
             }
           } else if (parsed.kind === 'status') {
             const key = 's' + c.id
@@ -428,7 +437,7 @@ function Studio({ project, onBack, onProjectChange, onDelete }) {
                       className="check-input"
                       placeholder={cat.short}
                       value={local.answers[cat.id] || ''}
-                      onChange={e => setCategoryValue(cat.id, e.target.value)}
+                      readOnly
                       rows={2}
                     />
                   )}
